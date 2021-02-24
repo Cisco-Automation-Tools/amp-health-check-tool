@@ -5,7 +5,7 @@
  
 You've successfully deployed AMP for Endpoints and it is now running on your system.  Great!  But, what is it actually doing?  Most of the time it doesn't look like it is doing anything, but AMP is actually performing file checks constantly on the endpoint.  The goal of this tool is to provide additional insight into AMP operations and allow customers to perform troubleshooting on their own.  This should empower customers to self-resolve performance issues that would otherwise involve TAC engagement, and also provide visibility into AMP’s various activities.
 
-This tool was developed by Matthew Franks (AMP Tier3) and Brandon Macer (Security CX).  With enough support and adoption, the long-term hope is to integrate this tool’s functionality into the AMP GUI.
+This tool was developed by Matthew Franks (AMP Tier3), Brandon Macer (Security CX), Joe Mattress, Clay Wooldridge, and David Pryor.  With enough support and adoption, the long-term hope is to integrate this tool’s functionality into the AMP GUI.
 
 ## Disclaimer
 
