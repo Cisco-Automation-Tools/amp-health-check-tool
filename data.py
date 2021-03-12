@@ -1,42 +1,46 @@
-'''
+"""
 The data module does the majority of the grunt work for the program.
-'''
-import os
-import re
-from string import Template
-from collections import Counter
-import time
-import xml.etree.ElementTree as ET
-import winreg
+"""
 import json
-import platform
 import logging
-import ssl
-import socket
-import sys
-import subprocess
-import struct
+import os
+import platform
+import re
 import shutil
+import socket
+import struct
+import subprocess
+import sys
+import time
+import winreg
+import xml.etree.ElementTree as ET
+from collections import Counter
+from string import Template
+
+import PySimpleGUI as sg
 import psutil
 import requests
-import PySimpleGUI as sg
-from nam_urls import NAMADDRESSLIST
-from resources import RESOURCES
-
-#update
+# update
 import validators
 
 try:
-    import apiCreds # pylint: disable=import-error
+    import apiCreds  # pylint: disable=import-error
 except ModuleNotFoundError:
     apiCreds = False
 
-class Data:
-    '''
-    The data class is the instance containing most of the data for the health check.
-    '''
 
-    def __init__(self):
+def prepend_https(url):
+    if not re.search("^http(?:s)?://", url, re.I):
+        url = "https://" + url
+    return url
+
+
+class Data:
+    """
+    The data class is the instance containing most of the data for the health check.
+    """
+
+    def __init__(self, settings_manager):
         logging.debug("Initializing Data...")
         self.check_for_amp()
         self.last_log_line = ""
@@ -62,43 +66,46 @@ class Data:
         self.internal_health_check = 0
         self.parse_xml()
         self.debug_check()
-        self.local_uuid = self.dig_thru_xml("agent", "uuid", \
-            root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"), tag="")
+        self.local_uuid = self.dig_thru_xml("agent", "uuid",
+                                            root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"), tag="")
         self.api_cred_valid = False
-        self.auth = False
-        self.policy_color = 'Yellow'
+        self.policy_color = 'Gray'
         self.diag_failed = False
         self.ip_list = []
         self.excluded_list = []
         if apiCreds:
             logging.debug("Found apiCreds")
-            self.client_id = apiCreds.client_id
-            self.api_key = apiCreds.api_key
-            self.auth = (self.client_id, self.api_key)
-            self.verify_api_creds()
+            settings_manager.client_id = apiCreds.client_id
+            settings_manager.api_key = apiCreds.api_key
+            self.verify_api_creds(settings_manager)
         elif os.path.exists("apiCreds.txt"):
             logging.debug("Found apiCreds.txt")
             with open("apiCreds.txt", "r") as file_1:
                 lines = file_1.readlines()
-                self.client_id = lines[0].split('"')[1]
-                self.api_key = lines[1].split('"')[1]
-                self.auth = (self.client_id, self.api_key)
-                self.verify_api_creds()
-        if self.auth:
+                settings_manager.client_id = lines[0].split('"')[1]
+                settings_manager.api_key = lines[1].split('"')[1]
+                self.verify_api_creds(settings_manager)
+        if settings_manager.auth:
             logging.debug("Found self.auth")
-            self.policy_serial_compare(self.policy_dict['policy_uuid'], \
-                self.policy_dict['policy_sn'])
+            self.policy_serial_compare(self.policy_dict['policy_uuid'],
+                                       self.policy_dict['policy_sn'],
+                                       settings_manager)
         try:
-            self.tetra_version = self.dig_thru_xml("agent", "engine", "tetra", \
-                "defversions", root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"), \
-                    tag="").split(':')[1]
+            self.tetra_version = self.dig_thru_xml("agent", "engine", "tetra",
+                                                   "defversions",
+                                                   root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"),
+                                                   tag="").split(':')[1]
             self.tetra_version_display = str(self.tetra_version)
         except IndexError:
             logging.error("tetra_version or tetra_version_display IndexError")
             self.tetra_version = 0
             self.tetra_version_display = str(self.tetra_version)
-        #self.tetra_def_compare() #removing from init, on-demand only
-        self.isolation_check()
+        except AttributeError:
+            logging.error("tetra_version or tetra_version_display AttributeError. Could not find tetra version")
+            self.tetra_version = 0
+            self.tetra_version_display = str(self.tetra_version)
+        # self.tetra_def_compare() #removing from init, on-demand only
+        self.isolation_check(settings_manager)
         self.conn_test_results = {}
         logging.info('Data imports completed')
 
@@ -113,7 +120,7 @@ class Data:
         list_of_folders = []
         split_it = file_path.split("\\")
         for i in range(1, len(split_it)):
-            list_of_folders.append("\\".join(split_it[0:i+1]))
+            list_of_folders.append("\\".join(split_it[0:i + 1]))
         return list_of_folders
 
     def __repr__(self):
@@ -137,15 +144,15 @@ class Data:
         c_count = Counter(self.every_folder)
         common = c_count.most_common()
         filtered_list = []
-        for i in range(len(common)-2):
-            if common[i][0] not in common[i+1][0]:
+        for i in range(len(common) - 2):
+            if common[i][0] not in common[i + 1][0]:
                 filtered_list.append(common[i])
         return "\n".join(["{:<5} | {}".format(i[1], i[0]) for i in filtered_list[:n_count]])
 
     def get_cpu_usage(self):
-        '''
+        """
         Determine the CPU usage by AMP on the local system.
-        '''
+        """
         logging.debug("Starting get_cpu_usage")
         cpu = 0
         processors = psutil.cpu_count()
@@ -168,9 +175,9 @@ class Data:
         return float(final_cpu)
 
     def get_version(self):
-        '''
+        """
         Determine version of the AMP connector installed.
-        '''
+        """
         logging.debug("Starting get_version")
         path = r"C:/Program Files/Cisco/AMP"
         directory = os.listdir(path)
@@ -186,9 +193,9 @@ class Data:
         return ".".join(list(map(lambda x: str(x), max_version)))
 
     def convert_line(self, line):
-        '''
+        """
         Conversion function.
-        '''
+        """
         logging.debug("Starting convert_line")
         time, path, process = None, None, None
         reg = re.findall(self.regex_2, line)
@@ -203,13 +210,15 @@ class Data:
             "process": process
         }
 
-    def reset_data(self):
-        '''
+    def reset_data(self, settings_manager):
+        """
         Reset data counters.
-        '''
+        """
         logging.debug("Starting reset_data")
 
-        self.policy_serial_compare(self.policy_dict['policy_uuid'], self.policy_dict['policy_sn'])
+        self.policy_serial_compare(self.policy_dict['policy_uuid'],
+                                   self.policy_dict['policy_sn'],
+                                   settings_manager)
         self.data = []
         self.spero_count = 0
         self.quarantine_count = 0
@@ -220,14 +229,14 @@ class Data:
         self.ethos_count = 0
         self.inner_file_count = 0
         self.malicious_hit_count = 0
-        self.isolation_check()
+        self.isolation_check(settings_manager)
 
-    def update(self):
-        '''
+    def update(self, settings_manager):
+        """
         Update GUI with latest data counters.
-        '''
+        """
         logging.debug("Starting update")
-        self.connectivity_urls = NAMADDRESSLIST
+        self.connectivity_urls = settings_manager.current.endpoints
         self.cpu_list.append((time.ctime(), self.get_cpu_usage()))
         self.current_cpu = self.cpu_list[-1][1]
         with open(self.sfc_path, errors="ignore") as file_1:
@@ -302,9 +311,9 @@ class Data:
         return len(self.data)
 
     def get_top_exclusions(self, n_count=None):
-        '''
+        """
         Get count of top exclusions hit.
-        '''
+        """
         logging.debug("Starting get_top_exclusions")
         cnt = Counter()
         for i in self.excluded_list:
@@ -312,47 +321,47 @@ class Data:
         c_count = Counter(cnt.most_common(n_count))
         return "\n".join(["{:<5} | {}".format(i[1], i[0]) for i in c_count])
 
-#update
+    # update
     def validate_url(self, url):
         return validators.url(url)
 
     def get_processes(self):
-        '''
+        """
         Get list of processes.
-        '''
+        """
         logging.debug("Starting get_processes")
         return list(map(lambda i: i["process"], self.data))
 
     def get_paths(self):
-        '''
+        """
         Get list of paths.
-        '''
+        """
         logging.debug("Starting get_paths")
         return list(map(lambda i: i["path"], self.data))
 
     def convert_to_layout(self, temp="$time || $process || $path\n"):
-        '''
+        """
         Convert layout to proper format.
-        '''
+        """
         logging.debug("Starting convert_to_layout")
         template = Template(temp)
-        b_w = [template.substitute(time=i["time"], process=i["process"], \
-            path=i["path"]) for i in self.data]
+        b_w = [template.substitute(time=i["time"], process=i["process"],
+                                   path=i["path"]) for i in self.data]
         b_w.reverse()
         return "\n".join(b_w)
 
     def get_top_processes(self, n_count=None):
-        '''
+        """
         Get a list of the top system processes in terms of CPU usage.
-        '''
+        """
         logging.debug("Starting get_top_processes")
         c_count = Counter(self.get_processes()).most_common(n_count)
         return "\n".join(["{:<5} | {}".format(i[1], i[0]) for i in c_count])
 
     def get_top_extensions(self, n_count=None):
-        '''
+        """
         Get a list of the top extensions scanned by AMP.
-        '''
+        """
         logging.debug("Starting get_top_extensions")
         extensions = []
         for i in self.data:
@@ -368,20 +377,21 @@ class Data:
         return "\n".join(["{:<5} | {}".format(i[1], i[0]) for i in c_count])
 
     def get_top_paths(self, n_count=None):
-        '''
+        """
         Get a list of the top paths scanned by AMP.
-        '''
+        """
         logging.debug("Starting get_top_paths")
         c_count = Counter(self.get_paths()).most_common(n_count)
         return "\n".join(["{:<5} | {}".format(i[1], i[0]) for i in c_count])
 
-    def dig_thru_xml(self, *args, root, tag="{http://www.w3.org/2000/09/xmldsig#}", \
-        is_list=False):
-        '''
+    def dig_thru_xml(self, *args, root, tag="{http://www.w3.org/2000/09/xmldsig#}",
+                     is_list=False):
+        """
         Pull all information from the policy.xml file.
-        '''
+        """
         logging.debug("Starting dig_thru_xml")
         for arg in args[:-1]:
+
             query = "{}{}".format(tag, arg)
             logging.debug("query: %s", query)
             root = root.findall(query)
@@ -403,62 +413,15 @@ class Data:
         return None
 
     def get_root(self, path):
-        '''
+        """
         Determine the root path of the XML.
-        '''
+        """
         logging.debug("Starting get_root")
         with open(path) as f:
             tree = ET.parse(f)
             root = tree.getroot()
             logging.debug("root: %s", root)
         return root
-
-#update
-    def add_url(self, url):
-        NAMADDRESSLIST.append(url)
-
-    def url_exists(selfself,url):
-        # check to see if url being added already exists in NAMADDRESSLIST
-        isFound = False
-        for item in NAMADDRESSLIST:
-            if url == item:
-               isFound = True
-               break
-        return isFound
-
-
-    def remove_url(selfself, urls):
-        # check to see if url exists in NAMADDRESSLIST
-        is_found = False
-
-        for url in urls:
-            index = 0
-            for item in NAMADDRESSLIST:
-                if url == item:
-                   is_found = True
-                   break
-                index = index + 1
-
-            if is_found:
-                del NAMADDRESSLIST[index]
-
-        return True
-
-    def modify_url(selfself, origional, new_url):
-        # check to see if url exists in NAMADDRESSLIST
-        is_found = False
-
-        index = 0
-        for item in NAMADDRESSLIST:
-            if origional == item:
-                is_found = True
-                break
-            index = index + 1
-
-        if is_found:
-            NAMADDRESSLIST[index] = new_url
-
-        return True
 
     def parse_xml(self, path=r"C:/Program Files/Cisco/AMP/policy.xml"):
         """
@@ -474,42 +437,42 @@ class Data:
             "identity_sync": ("Object", "config", "janus", "agent_guid_sync_type"),
             "cache_ttl_unknown": ("Object", "config", "agent", "cloud", "cache", "ttl", "unknown"),
             "cache_ttl_clean": ("Object", "config", "agent", "cloud", "cache", "ttl", "clean"),
-            "cache_ttl_malicious": ("Object", "config", "agent", "cloud", "cache", "ttl", \
-                "malicious"),
+            "cache_ttl_malicious": ("Object", "config", "agent", "cloud", "cache", "ttl",
+                                    "malicious"),
             "cache_ttl_unseen": ("Object", "config", "agent", "cloud", "cache", "ttl", "unseen"),
             "cache_ttl_block": ("Object", "config", "agent", "cloud", "cache", "ttl", "block"),
-            "qaction": ("Object", "config", "agent", "driver", "protmode", "qaction"), \
-                # qaction 0=audit, 1=quarantine
-            "monitor_file": ("Object", "config", "agent", "driver", "protmode", "file"), \
-                # monitor file copy/move
-            "process": ("Object", "config", "agent", "driver", "protmode", "process"), \
-                # monitor file executes
-            "spp": ("Object", "config", "agent", "driver", "selfprotect", "spp"), # SPP enabled?
-            "spp_qaction": ("Object", "config", "agent", "driver", "selfprotect", "spp_qaction"), \
-                # SPP quarantine action
-            "exprev_enable": ("Object", "config", "agent", "exprev", "enable"), # Exprev enabled?
-            "ethos_file": ("Object", "config", "agent", "scansettings", "ethos", "file"), \
-                # ETHOS on file copy/move
+            "qaction": ("Object", "config", "agent", "driver", "protmode", "qaction"),
+            # qaction 0=audit, 1=quarantine
+            "monitor_file": ("Object", "config", "agent", "driver", "protmode", "file"),
+            # monitor file copy/move
+            "process": ("Object", "config", "agent", "driver", "protmode", "process"),
+            # monitor file executes
+            "spp": ("Object", "config", "agent", "driver", "selfprotect", "spp"),  # SPP enabled?
+            "spp_qaction": ("Object", "config", "agent", "driver", "selfprotect", "spp_qaction"),
+            # SPP quarantine action
+            "exprev_enable": ("Object", "config", "agent", "exprev", "enable"),  # Exprev enabled?
+            "ethos_file": ("Object", "config", "agent", "scansettings", "ethos", "file"),
+            # ETHOS on file copy/move
             "ethos": ("Object", "config", "agent", "scansettings", "ethos", "enable"),
-            "ethos_max_filesize": ("Object", "config", "agent", "scansettings", "ethos", \
-                "maxfilesize"),
-            "max_archive_filesize": ("Object", "config", "agent", "scansettings", \
-                "maxarchivefilesize"),
+            "ethos_max_filesize": ("Object", "config", "agent", "scansettings", "ethos",
+                                   "maxfilesize"),
+            "max_archive_filesize": ("Object", "config", "agent", "scansettings",
+                                     "maxarchivefilesize"),
             "max_filesize": ("Object", "config", "agent", "scansettings", "maxfilesize"),
             "scheduled_scan": ("Object", "config", "agent", "scansettings", "scheduled"),
             "spero": ("Object", "config", "agent", "scansettings", "spero", "enable"),
-            "tetra_scan_archives": ("Object", "config", "agent", "scansettings", "tetra", \
-                "options", "ondemand", "scanarchives"),
-            "tetra_deep_scan": ("Object", "config", "agent", "scansettings", "tetra", "options", \
-                "ondemand", "deepscan"),
-            "tetra_scan_packed": ("Object", "config", "agent", "scansettings", "tetra", "options", \
-                "ondemand", "scanpacked"),
-            "tetra_automatic_update": ("Object", "config", "agent", "scansettings", "tetra", \
-                "updater", "enable"),
-            "tetra_update_server": ("Object", "config", "agent", "scansettings", "tetra", \
-                "updater", "server"),
-            "tetra_update_interval": ("Object", "config", "agent", "scansettings", "tetra", \
-                "updater", "interval"),
+            "tetra_scan_archives": ("Object", "config", "agent", "scansettings", "tetra",
+                                    "options", "ondemand", "scanarchives"),
+            "tetra_deep_scan": ("Object", "config", "agent", "scansettings", "tetra", "options",
+                                "ondemand", "deepscan"),
+            "tetra_scan_packed": ("Object", "config", "agent", "scansettings", "tetra", "options",
+                                  "ondemand", "scanpacked"),
+            "tetra_automatic_update": ("Object", "config", "agent", "scansettings", "tetra",
+                                       "updater", "enable"),
+            "tetra_update_server": ("Object", "config", "agent", "scansettings", "tetra",
+                                    "updater", "server"),
+            "tetra_update_interval": ("Object", "config", "agent", "scansettings", "tetra",
+                                      "updater", "interval"),
             "tetra": ("Object", "config", "agent", "scansettings", "tetra", "enable"),
             "urlscanner": ("Object", "config", "agent", "urlscanner", "enable"),
             "orbital": ("Object", "config", "orbital", "enablemsi"),
@@ -517,12 +480,12 @@ class Data:
             "connector_protection": ("Object", "config", "agent", "control", "serviceex"),
             "uninstall_password": ("Object", "config", "agent", "control", "uninstallex"),
             "DFC_qaction": ("Object", "config", "agent", "nfm", "settings", "qaction"),
-            "DFC_mode": ("Object", "config", "agent", "nfm", "settings", "mode"), \
-                # 0=Audit, 1=Passive (allow until disposition received), 2=Active \
-                # (block until disposition received)
+            "DFC_mode": ("Object", "config", "agent", "nfm", "settings", "mode"),
+            # 0=Audit, 1=Passive (allow until disposition received), 2=Active \
+            # (block until disposition received)
             "DFC": ("Object", "config", "agent", "nfm", "enable"),
             "heartbeat": ("Object", "config", "agent", "hb", "interval"),
-            "log_level": ("Object", "config", "agent", "log", "level"), # Default=0
+            "log_level": ("Object", "config", "agent", "log", "level"),  # Default=0
             "cmd_line_log": ("Object", "config", "agent", "log", "showcmdline"),
             "cmd_line": ("Object", "config", "agent", "cmdlinecapture", "enable"),
             "verbose_history": ("Object", "config", "agent", "history", "verbose"),
@@ -531,10 +494,10 @@ class Data:
             "hide_ioc_toast": ("Object", "config", "ui", "notification", "hide_ioc_toast"),
             "hide_file_toast": ("Object", "config", "ui", "notification", "hide_file_toast"),
             "hide_nfm_toast": ("Object", "config", "ui", "notification", "hide_nfm_toast"),
-            "hide_exprev_toast": ("Object", "config", "ui", "notification", \
-                "hide_exprev_toast"),
-            "hide_detection_toast": ("Object", "config", "ui", "notification", \
-                "hide_detection_toast"),
+            "hide_exprev_toast": ("Object", "config", "ui", "notification",
+                                  "hide_exprev_toast"),
+            "hide_detection_toast": ("Object", "config", "ui", "notification",
+                                     "hide_detection_toast"),
             "tray_log_level": ("Object", "config", "ui", "log", "level"),
             "connector_log_level": ("Object", "config", "monitor", "log", "level"),
             "ip_tray": ("Object", "config", "ui", "enable"),
@@ -553,11 +516,11 @@ class Data:
 
         root = self.get_root(path)
 
-        policy_dict["path_exclusions"] = self.dig_thru_xml("Object", "config", "exclusions", \
-            "info", "item", root=root, is_list=True)
+        policy_dict["path_exclusions"] = self.dig_thru_xml("Object", "config", "exclusions",
+                                                           "info", "item", root=root, is_list=True)
         logging.debug("path exclusions: %s", policy_dict['path_exclusions'])
-        policy_dict["process_exclusions"] = self.dig_thru_xml("Object", "config", "exclusions", \
-            "process", "item", root=root, is_list=True)
+        policy_dict["process_exclusions"] = self.dig_thru_xml("Object", "config", "exclusions",
+                                                              "process", "item", root=root, is_list=True)
         logging.debug("process exclusions: %s", policy_dict['process_exclusions'])
 
         for i in policy_key.items():
@@ -565,18 +528,18 @@ class Data:
             policy_dict[i[0]] = self.dig_thru_xml(*i[1], root=root)
         self.policy_dict = policy_dict
 
-    def isolation_check(self):
-        '''
+    def isolation_check(self, settings_manager):
+        """
         Check to see if the endpoint is isolated.
-        '''
+        """
         logging.info("Running isolation_check")
         self.isolated = 'Not Isolated'
         self.unlock_code = ''
         try:
             aReg = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
             logging.debug("aReg: %s", aReg)
-            aKey = winreg.OpenKey(aReg, r"SOFTWARE\\Immunet Protect", 0, \
-                (winreg.KEY_WOW64_64KEY+winreg.KEY_READ))
+            aKey = winreg.OpenKey(aReg, r"SOFTWARE\\Immunet Protect", 0,
+                                  (winreg.KEY_WOW64_64KEY + winreg.KEY_READ))
             logging.debug("aKey: %s", aKey)
             i = 0
             while 1:
@@ -596,18 +559,22 @@ class Data:
             self.isolated = 'Not Isolated'
         if self.isolated == 'Isolated':
             logging.debug("isolated")
-            self.isolation_code(self.local_uuid)
+            self.isolation_code(self.local_uuid, settings_manager)
 
-    def isolation_code(self, local_uuid):
-        '''
+    def isolation_code(self, local_uuid, settings_manager):
+        """
         Pull the isolation code if the endpoint is isolated.
-        '''
+        """
         logging.debug("Checking isolation for %s", local_uuid)
-        self.unlock_code = ''
-        data = RESOURCES["isolation_code"]
+        if not self.api_cred_valid:
+            self.unlock_code = "No Valid API Creds"
+            return
+        data = settings_manager.current.resources["isolation_code"]
+        data = prepend_https(data)
         url = data.format(local_uuid)
+        url = prepend_https(url)
         try:
-            r = requests.get(url, auth=self.auth)
+            r = requests.get(url, auth=settings_manager.auth)
             j = json.loads(r.content)
             self.unlock_code = "Unlock Code: {}".format(j['data']['unlock_code'])
         except requests.exceptions.ConnectionError:
@@ -617,137 +584,181 @@ class Data:
             logging.warning("KeyError")
             self.unlock_code = ''
 
-    def policy_serial_compare(self, policy_uuid, policy_xml_serial):
-        '''
+    def policy_serial_compare(self, policy_uuid, policy_xml_serial, settings_manager):
+        """
         Check to see if the policy is up to date.
-        '''
-        data = RESOURCES["policy_serial_compare"]
+        """
+        if not self.api_cred_valid:
+            self.policy_serial = "UNKNOWN"
+            self.policy_color = "Gray"
+            return False, "Unable to check if policy is up-to-date. No valid API added."
+        data = settings_manager.current.resources["policy_serial_compare"]
+        data = prepend_https(data)
         url = data.format(policy_uuid)
         try:
-            r = requests.get(url, auth=self.auth)
+            r = requests.get(url, auth=settings_manager.auth)
             j = json.loads(r.content)
             self.policy_serial = j['data'].get('serial_number')
             if self.policy_serial:
                 logging.debug("self.policy_serial: %s", self.policy_serial)
                 logging.debug("policy_xml_serial: %s", policy_xml_serial)
-                if int(self.policy_serial) == int(policy_xml_serial):   # Policy is up to date
+                if int(self.policy_serial) == int(policy_xml_serial):  # Policy is up to date
                     self.policy_color = 'Green'
-                else:   # Policy is not up to date
+                    return True, "Up to date."
+                else:  # Policy is not up to date
                     self.policy_color = 'Red'
+                    return True, "Not up to date."
             else:
-                self.policy_color = 'Red'
-        except:
-            logging.debug("Unknown Exception.  Network issue?")
-            self.policy_color = 'Yellow'
+                self.policy_serial = "UNKNOWN"
+                self.policy_color = "Gray"
+                return False, "Unable to check if policy is up-to-date. No policy returned from Policy API."
+        except Exception as e:
+            logging.debug(f"Unknown Exception.  Network issue? {str(e)}")
+            self.policy_serial = "UNKNOWN"
+            self.policy_color = "Gray"
+            return False, f"Unable to check if policy is up-to-date. Unknown error.\n{str(e)}"
 
-    def tetra_def_compare(self):
-        '''
+    def tetra_def_compare(self, settings_manager):
+        """
         Check to see if the TETRA definitions are up to date.
-        '''
+        """
         if platform.machine().endswith('64'):
-            url = RESOURCES["tetra_def_compare_64"]
+            url = settings_manager.current.resources["tetra_def_compare_64"]
         else:
-            url = RESOURCES["tetra_def_compare_32"]
+            url = settings_manager.current.resources["tetra_def_compare_32"]
+        url = prepend_https(url)
         logging.debug("requesting %s", url)
         try:
             r = requests.get(url)
+            if not r.ok:
+                self.tetra_color = "gray"
+                self.tetra_version_display = str("UNKNOWN")
+                return False, f"Bad response: {r.status_code}"
+
             j = r.text
             self.tetra_latest = j.split('value="')[1].split('"')[0]
             logging.debug("tetra_latest: %s", self.tetra_latest)
             logging.debug("data.tetra_version: %s", self.tetra_version)
-            if (int(self.tetra_latest) - int(self.tetra_version)) <= 5: # Within 5 versions \
+            if (int(self.tetra_latest) - int(self.tetra_version)) <= 5:  # Within 5 versions \
                 # is still relatively up to date since 4-5 versions come out a day
                 self.tetra_color = "green"
                 self.tetra_version_display = str(self.tetra_version)
-            elif self.tetra_version == 0 and self.policy_dict['tetra'] == "1": \
+            elif self.tetra_version == 0 and self.policy_dict['tetra'] == "1":
                 # TETRA defs are still downloading
                 self.tetra_color = "yellow"
                 self.tetra_version_display = str(self.tetra_version)
-            elif self.tetra_version == 0 and self.policy_dict['tetra'] == "0": \
+            elif self.tetra_version == 0 and self.policy_dict['tetra'] == "0":
                 # TETRA is not enabled
                 self.tetra_color = "red"
                 self.tetra_version_display = "DISABLED"
-            else:    #TETRA definitions are not up to date
+            else:  # TETRA definitions are not up to date
                 self.tetra_color = "yellow"
                 self.tetra_version_display = str(self.tetra_version)
         except requests.exceptions.ConnectionError:
             logging.warning("requests.exceptions.ConnectionError")
-            self.tetra_color = "yellow"
+            self.tetra_color = "gray"
+            self.tetra_version_display = str("UNABLE TO CONNECT")
+            return False, "Error connecting to TETRA server."
         except IndexError:
-            self.tetra_color = "yellow"
+            self.tetra_color = "gray"
+            self.tetra_version_display = "ERROR"
+            return False, "Error extracting data from API response."
+        return True, ""
 
-    def update_api_calls(self):
-        '''
+    def update_api_calls(self, settings_manager):
+        """
         Update the information pulled via the API.
-        '''
+        """
         logging.info("Running update_api_calls")
-        self.policy_dict['policy_sn'] = self.dig_thru_xml("Object", "config", "janus", "policy", \
-            "serial_number", root=self.get_root("C:/Program Files/Cisco/AMP/policy.xml"))
-        self.policy_serial_compare(self.policy_dict['policy_uuid'], self.policy_dict['policy_sn'])
+        self.policy_dict['policy_sn'] = self.dig_thru_xml("Object", "config", "janus", "policy",
+                                                          "serial_number",
+                                                          root=self.get_root("C:/Program Files/Cisco/AMP/policy.xml"))
+        self.policy_serial_compare(self.policy_dict['policy_uuid'],
+                                   self.policy_dict['policy_sn'],
+                                   settings_manager)
         try:
-            self.tetra_version = self.dig_thru_xml("agent", "engine", "tetra", "defversions", \
-                root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"), tag="").split(':')[1]
+            self.tetra_version = self.dig_thru_xml("agent", "engine", "tetra", "defversions",
+                                                   root=self.get_root("C:/Program Files/Cisco/AMP/local.xml"),
+                                                   tag="").split(':')[1]
         except IndexError:
             logging.warning("IndexError in digging through xml")
             self.tetra_version = 0
-        self.tetra_def_compare()
+        self.tetra_def_compare(settings_manager)
 
-    def verify_api_creds(self):
-        '''
+    def verify_api_creds(self, settings_manager):
+        """
         Check for API credential validity.
-        '''
-        url = RESOURCES["verify_api_creds"]
-
+        """
+        url = settings_manager.current.resources["verify_api_creds"]
+        url = prepend_https(url)
         try:
             logging.debug("Requesting {}".format(url))
-            r = requests.get(url, auth=(self.client_id, self.api_key))
-            if r.status_code == 200:
+            r = requests.get(url, auth=settings_manager.auth)
+            if r.ok:
                 logging.debug("200 response from %s", url)
-                self.api_cred_valid = True
-                logging.debug('Valid API creds for Client ID: %s', self.client_id)
-                # Set display for API Creds to Valid
+                self.api_cred_valid, self.api_cred_msg = (True, "Credentials are valid")
+                logging.debug('Valid API creds for Client ID: %s', settings_manager.client_id)
+            elif r.status_code == 401:
+                self.api_cred_valid, self.api_cred_msg = (
+                    False, f"Unable to validate credentials: Status Code 401: Unauthorized")
             else:
                 logging.debug("%s response from %s", r.status_code, url)
-                self.api_cred_valid = False
-        except requests.exceptions.ConnectionError:
-            self.api_cred_valid = False
-        except AttributeError:
-            self.api_cred_valid = False
+                self.api_cred_valid, self.api_cred_msg = (
+                    False, f"Unable to validate credentials: Bad status code received: {r.status_code}")
+        except requests.exceptions.ConnectionError as e:
+            self.api_cred_valid, self.api_cred_msg = (False, f"Unable to validate credentials: {str(e)}")
+        except AttributeError as e:
+            self.api_cred_valid, self.api_cred_msg = (False, f"Unable to validate credentials: {str(e)}")
+        except requests.exceptions.MissingSchema as e:
+            self.api_cred_valid, self.api_cred_msg = (False, f"Unable to validate credentials: {str(e)}")
 
-    def connectivity_check(self, window=None):
-        '''
+    def connectivity_check(self, window, settings_manager):
+        """
         Check connectivity to the required URLs for proper AMP operation.
-        '''
+        """
         logging.debug("Running connectivity check.")
-        for url in self.connectivity_urls:
+        for url in settings_manager.current.endpoints:
             logging.debug("Trying cert for %s", url)
             try:
-                cert = ssl.get_server_certificate((url, 443))
-                logging.debug("Cert is %s", cert)
+                r = requests.get(prepend_https(url), timeout=5)
                 self.conn_test_results[url] = 'Green'
-                logging.debug("Found cert for %s", url)
-            except TimeoutError:
+                logging.debug(f"{url} responded", url)
+            except (requests.exceptions.ReadTimeout,
+                    TimeoutError,
+                    requests.exceptions.ConnectTimeout,
+                    requests.exceptions.Timeout) as e:
                 logging.warning("Connection timed out for %s", url)
+                logging.warning(str(e))
                 self.conn_test_results[url] = 'Red'
-            except socket.gaierror:
+            except (requests.exceptions.SSLError,
+                    socket.gaierror) as e:
                 logging.warning("Cert error for %s", url)
-                self.conn_test_results[url] = 'Red'
-            except ConnectionRefusedError:
+                logging.warning(str(e))
+                self.conn_test_results[url] = 'Orange'
+            except ConnectionRefusedError as e:
                 logging.warning("ConnectionRefusedError for %s", url)
-                self.conn_test_results[url] = 'Red'
-            except WindowsError:
+                logging.warning(str(e))
+                self.conn_test_results[url] = 'Orange'
+            except WindowsError as e:
                 logging.warning("WinError for %s", url)
-                self.conn_test_results[url] = 'Red'
+                logging.warning(str(e))
+                self.conn_test_results[url] = 'Orange'
+            except Exception as e:
+                logging.warning(f"Exception for {url}: {str(e)}")
+                self.conn_test_results[url] = 'Orange'
+
+
             window.FindElement(url).Update(background_color=self.conn_test_results[url])
             logging.debug("conn for %s complete: %s", url, self.conn_test_results[url])
             window.Refresh()
 
     def check_for_amp(self):
-        '''
+        """
         Ensure AMP is installed on the system.
-        '''
+        """
         logging.debug("data.check_for_amp: Running data.check_for_amp")
         amp_installed = False
+        amp_running = False
         for proc in psutil.process_iter():
             try:
                 if proc.name() == "sfc.exe":
@@ -758,15 +769,15 @@ class Data:
                         amp_running = True
             except psutil.NoSuchProcess:
                 logging.warning("Error: psutil.NoSuchProcess in check_for_amp")
-        if amp_installed == False or amp_running == False:
+        if amp_installed is False or amp_running is False:
             logging.warning("amp_installed or amp_running == False")
             sg.Popup("Ensure AMP is installed and running and try again.", title="AMP not found")
             sys.exit()
 
     def debug_check(self):
-        '''
+        """
         Check to see if AMP logging is set to debug. If not set, set temporarily.
-        '''
+        """
         if self.policy_dict['log_level'] == "549755813887":
             logging.info("Debug Logging already enabled")
             self.enabled_debug = False
@@ -774,29 +785,34 @@ class Data:
             logging.info('Enabling debug logging.')
             try:
                 subprocess.Popen(["{}/{}/sfc.exe".format(self.root_path, self.version), '-l', 'start'])
+                self.is_admin = True
+                self.enabled_debug = True
             except OSError:
-                sg.Popup("Changing log level requires running AMP Health Checker as Admin.  \
-                    Please try again as Admin.", title="Admin required")
-                sys.exit()
+                sg.Popup("User is not administrator.\n"
+                         "Unable to temporarily enable AMP debug logging.\n"
+                         "Certain features require administrator privileges.\n"
+                         "Those features will be disabled",
+                         title="Admin required")
+                sys.is_admin = False
+                self.enabled_debug = False
             logging.info('Debug logging enabled.')
-            self.enabled_debug = True
         else:
             logging.info("Log level was set to %s", self.policy_dict['log_level'])
             self.enabled_debug = False
 
     def disable_debug(self):
-        '''
+        """
         Disable AMP debug logging if set temporarily.
-        '''
+        """
         logging.info('Disabling debug logging.')
         subprocess.Popen(["{}/{}/sfc.exe".format(self.root_path, self.version), '-l', 'stop'])
         logging.info('Debug logging disabled.')
         self.enabled_debug = False
 
     def convert_uptime(self, uptime, granularity=4):
-        '''
+        """
         Convert the pulled uptime into a readable format.
-        '''
+        """
         intervals = (
             ('weeks', 604800),
             ('days', 86400),
@@ -816,9 +832,9 @@ class Data:
         self.converted_uptime = ', '.join(result[:granularity])
 
     def get_top_ips(self, ip_list, n=10):
-        '''
+        """
         Get a list of the top IPs seen by AMP.
-        '''
+        """
         c = Counter(ip_list)
         to_return = []
         for i in c.most_common(n):
@@ -826,30 +842,24 @@ class Data:
         return "\n".join(to_return)
 
     def generate_diagnostic(self):
-        '''
+        """
         Generate an AMP diagnostic file.
-        '''
+        """
         src = os.path.join(os.getcwd(), 'amp_health_checker_log.log')
         dst = os.path.join(os.environ['HOMEPATH'], 'Desktop')
+
+        copy_fail = False
         try:
             shutil.copy(src, dst)
         except FileNotFoundError:
             logging.error("FileNotFoundError: Source: %s | Dest: %s", src, dst)
-            self.diag_failed = True
+            copy_fail = True
 
+        support_tool_fail = False
         try:
             subprocess.Popen("{}/{}/ipsupporttool.exe".format(self.root_path, self.version))
         except OSError as e:
             logging.error(e)
-            self.diag_failed = True
+            support_tool_fail = True
 
-def main():
-    '''
-    Process Data class.
-    '''
-    d = Data()
-    d.update()
-    d.generate_diagnostic()
-
-if __name__ == "__main__":
-    main()
+        self.diag_failed = (copy_fail, support_tool_fail)

@@ -20,12 +20,54 @@ Current executable has been included in the files above for ease of use.
 
 ## Usage
  
-To start the tool, ensure that you have an instance of AMP running and run the main_page.py script. If you have an executable from PyInstaller, just double click the executable.  You'll be presented with the GUI interface.
+To start the tool, ensure that you have an instance of AMP running and run the main_page.py script. If you have an executable from PyInstaller, just right-click the executable and select "Run as Administrator".  You'll be presented with the GUI interface.
 
  
 ## Main Page GUI
 
 ![](/images/Main_Page.png)
+
+## Settings GUI
+
+This page is reached by pressing "Settings" button from Main Page GUI. <br /> 
+
+![](/images/Settings.png)
+
+There are 4 modes dependent on which cloud your connector belongs to: <br /> 
+
+**Private** - custom mode to for private networks <br />
+**NAM** - North American  <br />
+**EU** - European <br />
+**APJC** - Asian Pacific <br />
+
+**AMP Console Hostname** - enter hostname and associated URLs will be prepopulated.
+
+**Policy URL:** used by "Check Policy Version" button on Main Page. <br />
+**Isolation URL:** used by the tool to determine if AMP Endpoint is isolated. <br />
+**Tetra 32bit URL:** used by "Check TETRA Version" button on Main Page if on 32-bit Windows.<br />
+**Tetra 64bit URL:** used by "Check TETRA Version" button on Main Page if on 64-bit Windows.<br />
+**Verify API Creds URL:** used by "Check API Credentials" button on Main Page.<br />
+
+**Save** The AMP Health Check tool saves configuration settings <br />
+to a json file located at:  %HOME%/.amp_health_check/config.json  <br />
+
+When the tool first starts up, it will check this directory location for config.json.  If not <br />
+present, the tool will start up with default settings.  When the tool closes or if any values <br />
+are changed, the config.json file will be created and/or updated.
+
+**Import** A custom config.json file may be imported using the IMPORT button in the Settings GUI. This is to provide the option to load in a config.json file to be utilized by the tool.  The tool will give the following prompt allowing you to browse to the location of the config.json file you want to import:
+
+![](/images/Import_browse.png)
+
+Those settings will then get saved to %HOME%/.amp_health_check/config.json  When a json file is imported, the tool will do basic validation to ensure it is in the proper format.  If it is incorrect, you will see the following error:
+
+![](/images/Import_validation_error.png)
+
+You may use the tool to create a json template.  Simply launch the tool and then close it.  When the tool starts up, it will check for a json in %HOME%.  If it doesn't exist, it will create one.  That json file can then be edited and used as a template to distribute to users as a config for the tool.
+
+Here is a sample config.json file:
+
+![](/images/Config_json.png)
 
 ### AMP Version
  
@@ -55,7 +97,7 @@ For additional information on Endpoint Isolation, please refer to the [AMP User 
 
 ### TETRA Version
  
-This displays the current TETRA definition version downloaded by the AMP connector.  Click the Check TETRA Version button to check that against the version available in the cloud.  If you have the latest version, it will be highlighted Green.  If you have a version within the last five updates, it will be highlighted Yellow.  If your version is more than five updates behind, it will be highlighted Red.  Also, the current version will be displayed on the right.
+This displays the current TETRA definition version downloaded by the AMP connector.  Click the Check TETRA Version button to check that against the version available in the cloud.  If you have the latest version, it will be highlighted Green.  If you have a version within the last five updates, it will be highlighted Yellow.  If your version is more than five updates behind, it will be highlighted Red.  When not in sync, the cloud version will be displayed to the right of the button.
 
 ![](/images/TETRA_Version.png)
 
@@ -63,7 +105,9 @@ NOTE: This functionality does not require API Credentials.
 
 ### Policy Serial
  
-This displays the current Policy Serial number in place on the local connector.  Click the Check Policy Version button to check that against the version available in the cloud.  If you have the latest version, it will be highlighted Green.  If your version is not the latest, it will be highlighted Red.  Also, the latest version available will be displayed on the right.
+This displays the current Policy Serial number in place on the **local** AMP connector.  Click the Check Policy Version button to check that against the version available in the cloud.  If you have the latest version, it will be highlighted Green.  If your version is not the latest, it will be highlighted Red.  When not in sync, the latest version available in the cloud will be displayed to the right of the button.
+
+![](/images/Policy_Serial.png)
 
 ### API Credentials
  
@@ -96,7 +140,7 @@ Live top processes gives a quick view into the top processes being scanned by th
 
 ### Connectivity Test
  
-The Connectivity Test button will allow you to run a connectivity test to the AMP servers.  They will all show as yellow while the test is running.  If they turn green, the connection was successful.  If they turn red, the connection was unsuccessful.
+The Connectivity Test button will allow you to run a connectivity test to the AMP servers.  They will all show as yellow while the test is running.  **Green** - connection successful.  **Orange** - server reached, but something went wrong (i.e. cert error).  **Red** - connection timeout (i.e. endpoint unreachable).
 
 ![](images/Connectivity.png)
 
@@ -139,10 +183,6 @@ Manual SFC Analysis allows you to run analysis on a file from another machine or
 ### Log Level
  
 The log level buttons allow you to select the logging level for the AMP Health Checker tool.  It does not change the log level on the AMP Connector!  If you run into an issue with the Health Checker tool, please put the tool in DEBUG, reproduce the issue, and provide the AMP diagnostic file and Health Checker logs for analysis.
-
-### Region
- 
-The region buttons allow you to switch between NAM, EU and APJC depending on which cloud your connector belongs to.
 
 ### Refresh
  

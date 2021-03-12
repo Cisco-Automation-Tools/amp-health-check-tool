@@ -1,47 +1,45 @@
-'''
+"""
 This section is for all the popup GUIs off the main page.
-'''
-import logging
-import PySimpleGUI as sg
+"""
 # update
-import validators
-from pathlib import Path
 import json
+import logging
 import re
-import os.path
-from time import sleep
+from textwrap import wrap
+import PySimpleGUI as sg
+from schema import SchemaError
 
 # update
-from data import Data, NAMADDRESSLIST
-from resources import RESOURCES
-from main_page import save_namurls
+from amp_settings import Config, PrivateConfig, SettingsManager
+from config_schema import config_schema
+from config_schema import valid_url_re as regex
 
-regex = re.compile(
-    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-    r'localhost|'  # localhost...
-    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-    r'(?::\d+)?'  # optional port
-    r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+disable_color = "gray"
+enable_color = "black"
 
 
-def analysis(data):
-    '''
+def _(msg: list):
+    return "\n".join(wrap(msg))
+
+
+def analysis(data, settings_manager):
+    """
     Run quick analysis on the system.
-    '''
-    data.update()
+    """
+    data.update(settings_manager)
     layout = [
-        [sg.Multiline("Top 10 Processes\n" + data.get_top_processes(10), \
+        [sg.Multiline("Top 10 Processes\n" + data.get_top_processes(10),
                       size=(200, 12), key="_top_processes")],
-        [sg.Multiline("Top 10 Paths\n" + data.get_top_paths(10), \
+        [sg.Multiline("Top 10 Paths\n" + data.get_top_paths(10),
                       size=(200, 12), key="_top_paths")],
-        [sg.Multiline("Top 10 Extensions\n" + data.get_top_extensions(10), \
+        [sg.Multiline("Top 10 Extensions\n" + data.get_top_extensions(10),
                       size=(200, 12), key="_top_extensions")],
-        [sg.Multiline("Top 10 Folders\n" + data.get_top_folders(10), \
+        [sg.Multiline("Top 10 Folders\n" + data.get_top_folders(10),
                       size=(200, 12), key="_top_folders")],
-        [sg.Multiline("Top 10 Exclusions Hit\n" + data.get_top_exclusions(10), \
+        [sg.Multiline("Top 10 Exclusions Hit\n" + data.get_top_exclusions(10),
                       size=(200, 12), key="_top_exclusions")],
         [
-            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'), \
+            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'),
                           file_types=(("Log File", "*.log"),)),
             sg.Button("Cancel", button_color=('black', '#F0F0F0')),
         ]
@@ -52,7 +50,7 @@ def analysis(data):
         event, values = window.Read(timeout=3000)
         if event in (None, "Cancel"):
             break
-        data.update()
+        data.update(settings_manager)
         window.Element("_top_processes").Update("Top 10 Processes\n" + data.get_top_processes(10))
         window.Element("_top_paths").Update("Top 10 Paths\n" + data.get_top_paths(10))
         window.Element("_top_extensions").Update("Top 10 Extensions\n" + data.get_top_extensions(10))
@@ -71,17 +69,17 @@ def analysis(data):
     window.close()
 
 
-def just_process(data):
-    '''
+def just_process(data, settings_manager):
+    """
     Look at process data only.
-    '''
+    """
 
     layout = [
         [sg.Multiline(data.get_top_processes(), size=(100, 30), key="_data")],
         [
             sg.Button("Pause", button_color=('black', '#F0F0F0')),
             sg.Button("Resume", button_color=('black', '#F0F0F0')),
-            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'), \
+            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'),
                           file_types=(("Log File", "*.log"),)),
             sg.Button("Reset Data", button_color=('black', '#F0F0F0')),
             sg.Button("Cancel", button_color=('black', '#F0F0F0')),
@@ -93,7 +91,7 @@ def just_process(data):
     to_save = ""
     while True:
         event, values = window.Read(timeout=1000)
-        data.update()
+        data.update(settings_manager)
         if event in (None, "Cancel"):
             break
         elif event == "Pause":
@@ -103,19 +101,20 @@ def just_process(data):
             running = True
             window.Element("_running").Update("Status: RUNNING")
         elif event == "Reset Data":
-            data.reset_data()
+            data.reset_data(settings_manager)
             window.Refresh()
         if values.get("Save As") != to_save:
             to_save = values.get("Save As")
             with open(values.get("Save As"), "w") as f:
                 f.write(data.get_top_processes())
         if running:
-            window.Element("_data").Update(data.get_top_processes())
+            top = data.get_top_processes()
+            window.Element("_data").Update(value=top)
 
     window.close()
 
 
-def lpap(data):
+def lpap(data, settings_manager):
     """
     This is the live path and process (lpap) pop-up.  Needs to be fed the data.
     """
@@ -169,7 +168,7 @@ def lpap(data):
         [
             sg.Button("Start/Resume", button_color=('black', '#F0F0F0'), key="_start_resume"),
             sg.Button("Pause", button_color=('black', '#F0F0F0')),
-            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'), \
+            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'),
                           file_types=(("Log File", "*.log"),)),
             sg.Button("Reset Data", button_color=('black', '#F0F0F0')),
             sg.Button("Cancel", button_color=('black', '#F0F0F0')),
@@ -182,7 +181,7 @@ def lpap(data):
     is_first = True
     while True:
         event, values = window.Read(timeout=1000)
-        data.update()
+        data.update(settings_manager)
         if event in (None, "Cancel"):
             break
         elif event == "_start_resume":
@@ -232,9 +231,9 @@ def lpap(data):
 
 
 def lpap_data_reset(data):
-    '''
+    """
     Reset data for lpap.
-    '''
+    """
     data.spero_count = 0
     data.quarantine_count = 0
     data.cloud_lookup_count = 0
@@ -248,14 +247,14 @@ def lpap_data_reset(data):
     return data
 
 
-def get_api_credentials(data, api_key='', client_id=''):
+def get_api_credentials(data, settings_manager):
     """
     This is the section where API credentials are pulled and verified.
     """
     layout = [
-        [sg.Text('Insert Client ID'), sg.InputText('', size=(20, 1))],
-        [sg.Text('Insert API Key'), sg.InputText('', password_char="*", size=(20, 1))],
-        [sg.Button('Save', button_color=('black', '#F0F0F0')), sg.Button('Cancel', \
+        [sg.Text('Insert Client ID'), sg.InputText('', key="-ID-", size=(20, 1))],
+        [sg.Text('Insert API Key'), sg.InputText('', key="-KEY-", password_char="*", size=(20, 1))],
+        [sg.Button('Save', button_color=('black', '#F0F0F0')), sg.Button('Cancel',
                                                                          button_color=('black', '#F0F0F0'))]
     ]
     window = sg.Window("API Credentials", layout, location=(1, 1))
@@ -263,13 +262,12 @@ def get_api_credentials(data, api_key='', client_id=''):
         event, values = window.Read()
         logging.debug('Event - %s : Values - %s', event, values)
         if event == "Save":
-            data.client_id = values[0]
-            data.api_key = values[1]
-            data.auth = (data.client_id, data.api_key)
-            data.verify_api_creds()
-            if data.api_cred_valid == False:
+            settings_manager.client_id = values["-ID-"]
+            settings_manager.api_key = values["-KEY-"]
+            data.verify_api_creds(settings_manager)
+            if not data.api_cred_valid:
                 layout2 = [
-                    [sg.Text('Invalid Credentials')],
+                    [sg.Text(_(data.api_cred_msg))],
                     [sg.Button('OK', button_color=('black', '#F0F0F0'))]
                 ]
                 window2 = sg.Window('Invalid API Credentials', layout2, location=(1, 1))
@@ -286,232 +284,284 @@ def get_api_credentials(data, api_key='', client_id=''):
     window.close()
 
 
-def settings(data):
+def place(elem):
+    """
+    Places element provided into a Column element so that its placement in the layout is retained.
+    :param elem: the element to put into the layout
+    :return: A column element containing the provided element
+    """
+    return sg.Column([[elem]], pad=(0, 0))
+
+
+def settings(settings_manager: SettingsManager):
     """
     This is the section to display settings options.
     """
-    modify_urls(data)
-    # layout = [
-    #     # [sg.Text('Settings'), sg.InputText('', size=(20, 1))],
-    #     # update
-    #     [sg.Button('URL Entry', button_color=('black', '#F0F0F0')),
-    #      sg.Button('API Credential', button_color=('black', '#F0F0F0')), sg.Button('Cancel', \
-    #                                                                                button_color=('black', '#F0F0F0'))]
-    # ]
-    # window = sg.Window("Settings", layout, location=(1, 1))
-    # while True:
-    #     event, values = window.Read()
-    #     logging.debug('Event - %s : Values - %s', event, values)
-    #     if event == "API Credential":
-    #         d_instance = Data()
-    #         get_api_credentials(d_instance)
-    #     # update
-    #     elif event == "URL Entry":
-    #         modify_urls(data)
-    #     elif event == "View":
-    #         sg.Text("URL Endpoints: ", tooltip="List of URL endpoints i.e. cloud-ec.amp.cisco.com")
-    #         [sg.Text('Insert Endpoint URL'), sg.InputText('', size=(20, 1))],
-    #     elif event in (None, "Cancel"):
-    #         break
-    # window.close()
-
-
-def api_credential(api_client_id='', api_key=''):
-    """
-    This is the section to edit/add new api credentials from user.
-    """
+    rollback_config = settings_manager.current
+    listbox = sg.Listbox(values=[], size=(80, 12), key='-LIST-', select_mode='multiple', enable_events=True, )
     layout = [
-        [sg.Text('Insert Client ID'), sg.InputText('', size=(20, 1))],
-        [sg.Text('Insert API Key'), sg.InputText('', password_char="*", size=(20, 1))],
-        [sg.Button('Save', button_color=('black', '#F0F0F0')), sg.Button('Cancel', button_color=('black', '#F0F0F0'))]
-    ]
-    window = sg.Window("API Credentials", layout, location=(1, 1))
-    while True:
-        event, values = window.Read()
-        logging.debug('Event - %s : Values - %s', event, values)
-        if event == "Save":
-            api_client_id = values[0]
-            api_key = values[1]
-            print(api_client_id)
-            print(api_key)
-            window.close()
-        elif event == "View":
-            sg.Text("URL Endpoints: ", tooltip="List of URL endpoints i.e. cloud-ec.amp.cisco.com")
-            [sg.Text('Insert Endpoint URL'), sg.InputText('', size=(20, 1))],
-        elif event in (None, "Cancel"):
-            break
-    window.close()
+        [sg.Text('Mode:'), sg.Text('', key="-MODE-", size=(25, 1), font='Helvetica 10 bold'),
+         sg.Button('Private', size=(7, 1), key="-PRIVATE-", button_color=('black', '#F0F0F0')),
+         sg.Button('NAM', size=(7, 1), key="-NAM-", button_color=('black', '#F0F0F0')),
+         sg.Button('EU', size=(7, 1), key="-EU-", button_color=('black', '#F0F0F0')),
+         sg.Button('APJC', size=(7, 1), key="-APJC-", button_color=('black', '#F0F0F0'))],
+        [sg.Text('_' * 80)],
+        [sg.Text('AMP Console Hostname:', size=(18, 1)),
+         sg.InputText(enable_events=True, key="-AMP_CONSOLE_HOSTNAME-", size=(50, 1))],
+        [sg.Text('_' * 80)],
 
-def remove_urls(urls, nameUrls):
-    is_found = False
+        [sg.Text('Isolation URL:', size=(18, 1)),
+         sg.InputText(disabled=True, key="-ISOLATION_CODE-", size=(50, 1),
+                      text_color=disable_color)],
+        [sg.Text('Policy URL:', size=(18, 1)),
+         sg.InputText(disabled=True, key="-POLICY SERIAL COMPARE-", size=(50, 1),
+                      text_color=disable_color)],
+        [sg.Text('Tetra 32bit URL:', size=(18, 1)),
+         sg.InputText(disabled=True, key="-TETRA_32_COMPARE-", size=(50, 1),
+                      text_color=disable_color)],
+        [sg.Text('Tetra 64bit URL:', size=(18, 1)),
+         sg.InputText(disabled=True, key="-TETRA_64_COMPARE-", size=(50, 1),
+                      text_color=disable_color)],
+        [sg.Text('Verify API Creds URL:', size=(18, 1)),
+         sg.InputText(disabled=True, key="-VERIFY_API_CREDS-", size=(50, 1),
+                      text_color=disable_color)],
+        [sg.Text('' * 80)],
 
-    for url in urls:
-        index = 0
-        for item in nameUrls:
-            if url == item:
-                is_found = True
-                break
-            index = index + 1
-
-        if is_found:
-            del nameUrls[index]
-
-    return True
-
-def modify_urls(data):
-    """
-    This is the section to input new endpoint urls from user.
-    """
-    nameList = []
-    for url in NAMADDRESSLIST:
-        nameList.append(url)
-
-    layout = [
-        [sg.Text('Isolation Code:', size=(18, 1)), sg.InputText('', enable_events=True, key="-ISOLATION_CODE-", size=(50, 1))],
-        [sg.Text('Policy Serial Compare:', size=(18, 1)), sg.InputText('', enable_events=True, key="-POLICY SERIAL COMPARE-", size=(50, 1))],
-        [sg.Text('Tetra Compare (av64bit):', size=(18, 1)), sg.InputText('', enable_events=True, key="-TETRA_64_COMPARE-", size=(50, 1))],
-        [sg.Text('Tetra Compare (av32bit):', size=(18, 1)), sg.InputText('', enable_events=True, key="-TETRA_32_COMPARE-", size=(50, 1))],
-        [sg.Text('Verify API Creds:', size=(18,1)), sg.InputText('', enable_events=True, key="-VERIFY_API_CREDS-", size=(50, 1))],
-        [sg.Text("Select AMP vPC URLs: ")],
-        [sg.Listbox(values=nameList, size=(40, 12), key='-LIST-', select_mode='multiple', enable_events=True)],
-        [sg.Text('Add AMP vPC URLs:'), sg.InputText('', enable_events=True, key="-INPUTTEXT-", size=(50, 1)),
-         sg.Button('Add', key="-ADD-", button_color=('black', '#F0F0F0')),
-         sg.Button('Delete', key="-DELETE-", button_color=('black', '#F0F0F0'))],
+        [sg.Text("AMP Endpoints", size=(80, 1), text_color='white', font='Helvetica 10 bold', justification="center")],
+        [listbox],
+        [place(sg.InputText(enable_events=True, key="-INPUTTEXT-", size=(35, 1))),
+         place(sg.Button('Add', size=(7, 1), key="-ADD-", button_color=('black', '#F0F0F0'))),
+         place(sg.Button('Delete', size=(7, 1), key="-DELETE-", button_color=('black', '#F0F0F0')))],
+        [sg.Text('' * 80)],
         [sg.Text('', enable_events=True, visible=False, key="-MESSAGE_TEXT-", size=(50, 1))],
-        [sg.Button('Save', key="-SAVE-", button_color=('black', '#F0F0F0')),
-         sg.Button('Cancel', button_color=('black', '#F0F0F0'))]
+        [sg.Button('Save', size=(7, 1), key="-SAVE-", button_color=('black', '#F0F0F0')),
+         sg.Button('Cancel', size=(7, 1), button_color=('black', '#F0F0F0')), sg.Text(' ' * 75),
+         sg.Button('Import', size=(7, 1), key="-IMPORT-", button_color=('black', '#F0F0F0'))]
     ]
-    window = sg.Window("Settings", layout, location=(20, 20))
-    window.Finalize()
-    window['-ADD-'].update(disabled=True)
+    window = sg.Window("Settings", layout, location=(20, 20), size=(600, 660), margins=(20, 20))
+    window = window.Finalize()
+
     window['-DELETE-'].update(disabled=True)
-    window['-SAVE-'].update(disabled=True)
-    window['-ISOLATION_CODE-'].update(value=RESOURCES["isolation_code"])
-    window['-POLICY SERIAL COMPARE-'].update(value=RESOURCES["policy_serial_compare"])
-    window['-TETRA_64_COMPARE-'].update(value=RESOURCES["tetra_def_compare_64"])
-    window['-TETRA_32_COMPARE-'].update(value=RESOURCES["tetra_def_compare_32"])
-    window['-VERIFY_API_CREDS-'].update(value=RESOURCES["verify_api_creds"])
+    window['-SAVE-'].update(disabled=False)
+    populate_window(window,
+                    settings_manager.current.mode,
+                    settings_manager.current.amp_console_hostname,
+                    settings_manager.current.resources,
+                    settings_manager.current.endpoints,
+                    )
 
     while True:
         event, values = window.Read()
         logging.debug('Event - %s : Values - %s', event, values)
+
         if event == "-LIST-":
-            selectedvalues = values["-LIST-"]
-            if len(selectedvalues) > 0:
-               window['-DELETE-'].update(disabled=False)
+            selected_values = listbox.get_indexes()
+            if len(selected_values) > 0:
+                window['-DELETE-'].update(disabled=False)
             else:
-               window['-DELETE-'].update(disabled=True)
+                window['-DELETE-'].update(disabled=True)
             window['-MESSAGE_TEXT-'].update(visible=False, value='')
 
-        if event == "-INPUTTEXT-":
-            window['-MESSAGE_TEXT-'].update(visible=False, value='')
-            value = values["-INPUTTEXT-"]
-            if not value or not re.search(regex, value):
-                if value:
-                    window['-MESSAGE_TEXT-'].update(visible=True, value='Invalid URL format')
-                window['-ADD-'].update(disabled=True)
+        if event == "-AMP_CONSOLE_HOSTNAME-":
+            amp_console_hostname_url = values["-AMP_CONSOLE_HOSTNAME-"]
+            if isinstance(amp_console_hostname_url, str) and regex.search(amp_console_hostname_url):
+                window["-ISOLATION_CODE-"].update(value=amp_console_hostname_url + "/v1/computers/{}/isolation")
+                window["-POLICY SERIAL COMPARE-"].update(value=amp_console_hostname_url + "/v1/policies/{}")
+                window["-TETRA_32_COMPARE-"].update(value=amp_console_hostname_url + "/av32bit/versions.id")
+                window["-TETRA_64_COMPARE-"].update(value=amp_console_hostname_url + "/av64bit/versions.id")
+                window["-VERIFY_API_CREDS-"].update(value=amp_console_hostname_url + "/v1/version")
+                window['-MESSAGE_TEXT-'].update(visible=True, value='')
             else:
-                window['-ADD-'].update(disabled=False)
-                window['-MESSAGE_TEXT-'].update(visible=False, value='')
+                window["-ISOLATION_CODE-"].update(value="")
+                window["-POLICY SERIAL COMPARE-"].update(value="")
+                window["-TETRA_64_COMPARE-"].update(value="")
+                window["-TETRA_32_COMPARE-"].update(value="")
+                window["-VERIFY_API_CREDS-"].update(value="")
+                window['-MESSAGE_TEXT-'].update(visible=True, value='Invalid URL format')
 
-        if event in ["-ISOLATION_CODE-", "-POLICY SERIAL COMPARE-", "-TETRA_64_COMPARE-", "-TETRA_32_COMPARE-", "-VERIFY_API_CREDS-"]:
+        if event == "-IMPORT-":
+            validated_data = import_popup()
+            if validated_data:
+                mode = validated_data["MODE"]
+                if mode == "PRIVATE":
+                    imported_config = PrivateConfig(validated_data, mode)
+                else:
+                    imported_config = Config(validated_data, mode)
+                logging.debug(imported_config)
+                populate_window(window,
+                                imported_config.mode,
+                                imported_config.amp_console_hostname,
+                                imported_config.resources,
+                                imported_config.endpoints
+                                )
+
+        if event in {"-EU-", "-NAM-", "-APJC-", "-PRIVATE-"}:
+            logging.debug("SWITCHING MODES NOW")
+            settings_manager.switch_config(settings_manager.configs[event])
+
+            window['-ADD-'].update(disabled=True)
             window['-SAVE-'].update(disabled=False)
-            window['-MESSAGE_TEXT-'].update(value='')
-            window['-MESSAGE_TEXT-'].update(visible=False)
+            window['-MESSAGE_TEXT-'].update(value='', visible=True)
+
+            populate_window(window,
+                            settings_manager.current.mode,
+                            settings_manager.current.amp_console_hostname,
+                            settings_manager.current.resources,
+                            settings_manager.current.endpoints
+                            )
+            logging.debug("SWITCHING MODES DONE")
 
         if event == "-SAVE-":
-            value1 = values["-ISOLATION_CODE-"]
-            value2 = values["-POLICY SERIAL COMPARE-"]
-            value3 = values["-TETRA_64_COMPARE-"]
-            value4 = values["-TETRA_32_COMPARE-"]
-            value5 = values["-VERIFY_API_CREDS-"]
+            endpoints = window["-LIST-"].get_list_values()
+            try:
+                settings_manager.save_to_disk(values, endpoints)
+                rollback_config = settings_manager.current
+                window['-MESSAGE_TEXT-'].update(value='Data successfully saved')
+                window['-MESSAGE_TEXT-'].update(visible=True)
+            except SchemaError as e:
+                sg.Popup(f"Unable to save:\n{e.code}")
 
-            print(value1, value2, value3, value4, value5)
-            RESOURCES["isolation_code"] = value1
-            RESOURCES["policy_serial_compare"] = value2
-            RESOURCES["tetra_def_compare_64"] = value3
-            RESOURCES["tetra_def_compare_32"] = value4
-            RESOURCES["verify_api_creds"] = value5
-            NAMADDRESSLIST.clear()
-            for url in nameList:
-                NAMADDRESSLIST.append(url)
-            save_namurls()
-
-            window['-SAVE-'].update(disabled=True)
-            window['-MESSAGE_TEXT-'].update(value='Data successfully saved')
-            window['-MESSAGE_TEXT-'].update(visible=True)
-
+        if event == "-INPUTTEXT-":
+            value = values["-INPUTTEXT-"]
+            if isinstance(value, str) and regex.search(value):
+                window['-MESSAGE_TEXT-'].update(visible=False, value='')
+                window['-ADD-'].update(disabled=False)
+            else:
+                window['-MESSAGE_TEXT-'].update(visible=True, value='Invalid URL format')
+                window['-ADD-'].update(disabled=True)
 
         if event == "-ADD-":
             endpoint_url = values["-INPUTTEXT-"]
-            print(endpoint_url)
-            if re.search(regex, endpoint_url):
-                print("endpoint url is:", endpoint_url)
-                print("name address list before append is:", nameList)
-                if not data.url_exists(endpoint_url):
-                    #data.add_url(endpoint_url)
-                    nameList.append(endpoint_url)
-                    window.Element('-LIST-').Update(values=nameList)
-                else:
-                    logging.error('Duplicate URL - %s ', endpoint_url)
-
-                print("name address list after append is:", nameList)
-                window.Element('-INPUTTEXT-').Update(value='')
+            if regex.search(endpoint_url):
+                listbox_data = listbox.get_list_values()
+                listbox_data.append(endpoint_url)
+                logging.debug(f"ADD LIST:")
+                populate_endpoint_list(window,
+                                       settings_manager.current.mode,
+                                       listbox_data)
+                window.Element('-INPUTTEXT-').update(value='')
                 window['-SAVE-'].update(disabled=False)
 
-            else:
-                layout3 = [
-                    [sg.Text('Invalid URL')],
-                    [sg.Button('Retry', button_color=('black', '#F0F0F0'))]
-                ]
-                window3 = sg.Window("Invalid URL", layout3, location=(10, 10))
-                event3, values3 = window3.Read()
-                if event3 == "Retry":
-                    window3.close()
-                    print("Invalid URL")
-
         if event == "-DELETE-":
+            sel = listbox.get_indexes()
+            listbox_data = listbox.get_list_values()
+            for index in sel[::-1]:
+                listbox_data.pop(index)
+            populate_endpoint_list(window,
+                                   settings_manager.current.mode,
+                                   listbox_data)
 
-            selectedvalues = values["-LIST-"] = values["-LIST-"]
-            remove_urls(selectedvalues, nameList)
-            window.Element('-LIST-').Update(values=nameList)
-
-            window.Element('-INPUTTEXT-').Update(value='')
             window['-MESSAGE_TEXT-'].update(value='Urls successfully deleted')
             window['-MESSAGE_TEXT-'].update(visible=True)
             window['-SAVE-'].update(disabled=False)
 
-        if event == "-VIEW-":
-            layout = []
-            for url in NAMADDRESSLIST:
-                layout.append([sg.Text(url)])
-            layout.append([sg.Text('')])
-            layout.append([sg.Button('Close', button_color=('black', '#F0F0F0'))])
-            window2 = sg.Window("Endpoint URL list", layout, location=(20, 20))
-            while True:
-                event, values = window2.Read()
-                logging.debug('Event - %s : Values - %s', event, values)
-                if event in (None, "Close"):
-                    break
-                elif values["-EN-0"] == True:
-                    print("Items selected in List")
-            window2.close()
-
-        elif event in (None, "Cancel"):
+        if event in {sg.WIN_CLOSED, None, "Cancel"}:
+            settings_manager.current = rollback_config
             break
     window.close()
 
 
-def connectivity(data):
+def populate_endpoint_list(window, mode, endpoints):
+    window["-LIST-"].update(disabled=False)
+    if re.search("eu|nam|apjc", mode, re.I):
+        window["-LIST-"].update(values=endpoints)
+        window["-LIST-"].update(disabled=True)
+    else:
+        window["-LIST-"].update(values=endpoints, disabled=False)
+        window["-LIST-"].update(disabled=False)
+
+
+def populate_window(window, mode, amp_console_hostname, resource, endpoints):
+    logging.debug("{}".format("\n".join(map(str, [mode, amp_console_hostname, resource, endpoints]))))
+    if re.search("eu|nam|apjc", mode, re.I):
+        window['-INPUTTEXT-'].update(visible=False, disabled=True)
+        window['-ADD-'].update(visible=False, disabled=True)
+        window['-DELETE-'].update(visible=False, disabled=True)
+        window['-AMP_CONSOLE_HOSTNAME-'].update(disabled=False)
+        window['-AMP_CONSOLE_HOSTNAME-'].update(value="")
+        window['-AMP_CONSOLE_HOSTNAME-'].update(visible=False,
+                                                disabled=True,
+                                                text_color=disable_color
+                                                )
+
+    else:
+        window['-INPUTTEXT-'].update(visible=True, disabled=False)
+        window['-ADD-'].update(visible=True, disabled=False)
+        window['-DELETE-'].update(visible=True, disabled=False)
+        window["-AMP_CONSOLE_HOSTNAME-"].update(visible=True,
+                                                value=amp_console_hostname,
+                                                disabled=False,
+                                                text_color=enable_color
+                                                )
+
+    populate_endpoint_list(window, mode, endpoints)
+
+    window["-IMPORT-"].update(disabled=False)
+    window['-SAVE-'].update(disabled=False)
+
+    window["-MODE-"].update(value=mode)
+
+    window["-ISOLATION_CODE-"].update(value=resource["isolation_code"], disabled=False)
+    window["-POLICY SERIAL COMPARE-"].update(value=resource["policy_serial_compare"], disabled=False)
+    window["-TETRA_64_COMPARE-"].update(value=resource["tetra_def_compare_64"], disabled=False)
+    window["-TETRA_32_COMPARE-"].update(value=resource["tetra_def_compare_32"], disabled=False)
+    window["-VERIFY_API_CREDS-"].update(value=resource["verify_api_creds"], disabled=False)
+
+    window["-ISOLATION_CODE-"].update(disabled=True)
+    window["-POLICY SERIAL COMPARE-"].update(disabled=True)
+    window["-TETRA_64_COMPARE-"].update(disabled=True)
+    window["-TETRA_32_COMPARE-"].update(disabled=True)
+    window["-VERIFY_API_CREDS-"].update(disabled=True)
+
+
+def import_popup():
+    import_layout = [
+        [sg.T("")], [sg.Text("Choose a file: "), sg.Input(), sg.FileBrowse(key="-FILE-")],
+        [sg.Text('' * 80)],
+        [
+            sg.Button('OK', key="-OK-", size=(7, 1), button_color=('black', '#F0F0F0')),
+            sg.Button('Cancel', key="-ICANCEL-", size=(7, 1), button_color=('black', '#F0F0F0'))
+        ],
+        [sg.Text('', enable_events=True, visible=False, key="-MESSAGE_TEXT-", size=(50, 1))],
+    ]
+
+    ###Building Window
+    window = sg.Window('My File Browser', import_layout, size=(600, 150)).finalize()
+
+    while True:
+        event, values = window.read()
+        if event in {sg.WIN_CLOSED, "-ICANCEL-", "Exit"}:
+            validated_data = None
+            break
+        elif event == "-OK-":
+            try:
+                with open(values["-FILE-"]) as fp:
+                    data = json.load(fp)
+                validated_data = config_schema.validate(data)
+                logging.debug(validated_data)
+                break
+            except json.decoder.JSONDecodeError as e:
+                errmsg = '%s: line %d column %d (char %d)' % (e.msg, e.lineno, e.colno, e.pos)
+                window['-MESSAGE_TEXT-'].update(visible=True, value=f'Invalid file chosen: Invalid JSON:\n{errmsg}')
+            except SchemaError as e:
+                window['-MESSAGE_TEXT-'].update(visible=True, value=f'Invalid file chosen: Schema Error:\n{e.code}')
+            except Exception as e:
+                window['-MESSAGE_TEXT-'].update(visible=True, value=f'Invalid file chosen: UNKNOWN ERROR: {str(e)}')
+
+    window.close()
+    return validated_data
+
+
+def connectivity(data, settings_manager):
     """
     This is the section where connections to the required servers are verified.
     """
     size = (30, 1)
     layout = []
-    for url in data.connectivity_urls:
+    for url in settings_manager.current.endpoints:
         layout.append([sg.Text(url, size=size, background_color="Yellow", key=url)])
     layout.append([sg.Text("Status: RUNNING", key="_conn_test_running", size=(30, 1))]),
-    layout.append([sg.Button('Test Again', button_color=('black', '#F0F0F0'), key="_test_again", \
+    layout.append([sg.Button('Test Again', button_color=('black', '#F0F0F0'), key="_test_again",
                              disabled=True), sg.Button('Cancel', button_color=('black', '#F0F0F0'))])
     window = sg.Window("AMP Connectivity", layout, location=(1, 1))
     is_first = True
@@ -519,63 +569,64 @@ def connectivity(data):
         event, values = window.Read(timeout=500)
         logging.debug('Event - %s : Values - %s', event, values)
         if is_first:
-            data.connectivity_check(window)
+            data.connectivity_check(window, settings_manager)
             window.Element("_conn_test_running").Update("Status: COMPLETE")
             window.Element("_test_again").Update(disabled=False)
             is_first = False
         if event == '_test_again':
             window.Element("_test_again").Update(disabled=True)
-            for url in data.connectivity_urls:
+            for url in settings_manager.current.endpoints:
                 window.Element(url).Update(background_color="Yellow")
             window.Element("_conn_test_running").Update("Status: RUNNING")
-            data.connectivity_check(window)
+            data.connectivity_check(window, settings_manager)
             window.Element("_conn_test_running").Update("Status: COMPLETE")
             window.Element("_test_again").Update(disabled=False)
             window.Refresh()
         elif event in (None, 'Cancel'):
             break
-    data.update()
+    data.update(settings_manager)
     window.close()
 
 
-def check_latest_tetra(data, window):
-    '''
+def check_latest_tetra(data, window, settings_manager):
+    """
     Look up latest TETRA data.
-    '''
+    """
     window.FindElement('_tetra_version').Update(background_color="Yellow")
     window.Element("_latest_tetra_version").Update("Checking...")
     window.FindElement('_tetra_version_button').Update(disabled=True)
     window.Refresh()
-    data.tetra_def_compare()
+    success, msg = data.tetra_def_compare(settings_manager)
     window.Element("_latest_tetra_version").Update(data.tetra_latest)
     window.FindElement('_tetra_version').Update(background_color=data.tetra_color)
+    if not success:
+        sg.Popup(_(msg))
     window.FindElement('_tetra_version_button').Update(disabled=False)
     window.Refresh()
     return
 
 
-def check_latest_policy(data, window):
-    '''
+def check_latest_policy(data, window, settings_manager):
+    """
     Look up latest policy data.
-    '''
-    window.FindElement('_policy_version').Update(background_color="Yellow")
+    """
+    window.FindElement('_policy_version').Update(background_color="Gray")
     window.FindElement('_latest_policy_version').Update("Checking...")
     window.FindElement('_policy_version_button').Update(disabled=True)
     window.Refresh()
-    if not data.api_cred_valid:
-        logging.debug("no auth in latest policy check")
-        window.FindElement('_policy_version_button').Update(disabled=False)
-        window.Element("_latest_policy_version").Update("Invalid API")
-        return
-    data.policy_serial_compare(data.policy_dict['policy_uuid'], data.policy_dict['policy_sn'])
+    success, msg = data.policy_serial_compare(data.policy_dict['policy_uuid'],
+                                              data.policy_dict['policy_sn'],
+                                              settings_manager)
     window.Element("_latest_policy_version").Update(data.policy_serial)
     window.FindElement('_policy_version').Update(background_color=data.policy_color)
+    if not success:
+        sg.Popup(_(msg))
     window.FindElement('_policy_version_button').Update(disabled=False)
     window.Refresh()
     return
 
 
-def topips(data):
+def topips(data, settings_manager):
     """
     This is the section for top IP address cache queries (nfm_cache).
     """
@@ -588,7 +639,7 @@ def topips(data):
     while True:
         event, values = window.Read(timeout=1000)
         logging.debug('Event - %s : Values - %s', event, values)
-        data.update()
+        data.update(settings_manager)
         window.Element("_top_ips").Update(data.get_top_ips(data.ip_list))
         window.Refresh()
         if event in (None, "Cancel"):
@@ -600,29 +651,35 @@ def engines_enabled(data):
     """
     This is the section for displaying enabled/disabled for each engine
     """
+
+    def r_or_g(expression):
+        return "#28a745" if expression else "gray"
+
+    pd = data.policy_dict
     layout = [
         [sg.Text("Engine status")],
-        [sg.Checkbox('', default=True, disabled=True), sg.Text('SHA')],
-        [sg.Checkbox('', default=True if (data.policy_dict['tetra'] == '1') else False, \
-                     disabled=True), sg.Text('TETRA')],
-        [sg.Checkbox('', default=True if (data.policy_dict['exprev_enable'] == '1') else False, \
-                     disabled=True), sg.Text('Exploit Prevention')],
-        [sg.Checkbox('', default=True if (data.policy_dict['DFC'] == '1') else False, \
-                     disabled=True), sg.Text('Network Monitoring')],
-        [sg.Checkbox('', default=True if (data.policy_dict['spp'] == '1') else False, \
-                     disabled=True), sg.Text('System Process Protection')],
-        [sg.Checkbox('', default=True if (data.policy_dict['ethos'] == '1') else False, \
-                     disabled=True), sg.Text('ETHOS')],
-        [sg.Checkbox('', default=True if (data.policy_dict['spero'] == '1') else False, \
-                     disabled=True), sg.Text('SPERO')],
-        [sg.Checkbox('', default=True if (data.policy_dict['orbital'] == '1') else False, \
-                     disabled=True), sg.Text('Orbital')],
-        [sg.Checkbox('', default=True if (data.policy_dict['endpoint_isolation'] == '1') \
-            else False, disabled=True), sg.Text('Endpoint Isolation')],
+        [sg.Text('   ', background_color=r_or_g(True), key="SHA"),
+         sg.Text('SHA')],
+        [sg.Text('   ', background_color=r_or_g(pd['tetra'] == '1'), key="TETRA"),
+         sg.Text('TETRA')],
+        [sg.Text('   ', background_color=r_or_g(pd['exprev_enable'] == '1'), key="EXPREV"),
+         sg.Text('Exploit Prevention')],
+        [sg.Text('   ', background_color=r_or_g(pd['DFC'] == '1'), key="DFC"),
+         sg.Text('Network Monitoring')],
+        [sg.Text('   ', background_color=r_or_g(pd['spp'] == '1'), key="SPP"),
+         sg.Text('System Process Protection')],
+        [sg.Text('   ', background_color=r_or_g(pd['ethos'] == '1'), key="ETHOS"),
+         sg.Text('ETHOS')],
+        [sg.Text('   ', background_color=r_or_g(pd['spero'] == '1'), key="SPERO"),
+         sg.Text('SPERO')],
+        [sg.Text('   ', background_color=r_or_g(pd['orbital'] == '1'), key="ORBITAL"),
+         sg.Text('Orbital')],
+        [sg.Text('   ', background_color=r_or_g(pd['endpoint_isolation'] == '1'), key="ISO"),
+         sg.Text('Endpoint Isolation')],
         [sg.Button('OK', button_color=('black', '#F0F0F0'))]
     ]
 
-    window = sg.Window('Engines', layout)
+    window = sg.Window('Engines', layout).finalize()
 
     while True:
         event, values = window.Read()
@@ -643,11 +700,11 @@ def view_exclusions(data):
     column2 = []
     for process_exclusion in data.policy_dict['process_exclusions']:
         column2.append([sg.Text(process_exclusion.split('|')[-3])])
-    tab1_layout = [[sg.Column(column1, scrollable=True, vertical_scroll_only=True, \
+    tab1_layout = [[sg.Column(column1, scrollable=True, vertical_scroll_only=True,
                               size=(500, 400))]]
-    tab2_layout = [[sg.Column(column2, scrollable=True, vertical_scroll_only=True, \
+    tab2_layout = [[sg.Column(column2, scrollable=True, vertical_scroll_only=True,
                               size=(500, 400))]]
-    layout = [[sg.TabGroup([[sg.Tab('Exclusions', tab1_layout), sg.Tab('Process Exclusions', \
+    layout = [[sg.TabGroup([[sg.Tab('Exclusions', tab1_layout), sg.Tab('Process Exclusions',
                                                                        tab2_layout)]])],
               [sg.Button('OK', button_color=('black', '#F0F0F0'))]]
     window = sg.Window("Exclusions", layout)
@@ -660,17 +717,17 @@ def view_exclusions(data):
     window.close()
 
 
-def manual_sfc(data):
+def manual_sfc(data, settings_manager):
     """
     Pop-up for manual analysis of an SFC log.
     """
     column1 = []
     layout = [
-        [sg.Text("Current SFC Log: {}".format(data.sfc_path), size=(150, 1), \
+        [sg.Text("Current SFC Log: {}".format(data.sfc_path), size=(150, 1),
                  key="_path_display"), ],
-        [sg.Button("Change SFC File", button_color=('black', '#F0F0F0')), sg.Button("Analyze", \
+        [sg.Button("Change SFC File", button_color=('black', '#F0F0F0')), sg.Button("Analyze",
                                                                                     button_color=('black', '#F0F0F0')),
-         sg.Button("Reset SFC File", \
+         sg.Button("Reset SFC File",
                    button_color=('black', '#F0F0F0'))],
         [
             sg.Text("Cloud Lookup Count: ", tooltip="Count of the cloud lookups since starting \
@@ -716,18 +773,18 @@ def manual_sfc(data):
                 slow the system if scan count is high over a short period."),
             sg.Text("", size=(20, 1), key="_inner_file_scan")
         ],
-        [sg.Multiline("Top 10 Processes\n" + data.get_top_processes(10), size=(100, 12), \
+        [sg.Multiline("Top 10 Processes\n" + data.get_top_processes(10), size=(100, 12),
                       key="_top_processes"),
-         sg.Multiline("Top 10 Paths\n" + data.get_top_paths(10), size=(100, 12), \
+         sg.Multiline("Top 10 Paths\n" + data.get_top_paths(10), size=(100, 12),
                       key="_top_paths")],
-        [sg.Multiline("Top 10 Extensions\n" + data.get_top_extensions(10), size=(100, 12), \
+        [sg.Multiline("Top 10 Extensions\n" + data.get_top_extensions(10), size=(100, 12),
                       key="_top_extensions"),
-         sg.Multiline("Top 10 Folders\n" + data.get_top_folders(10), size=(100, 12), \
+         sg.Multiline("Top 10 Folders\n" + data.get_top_folders(10), size=(100, 12),
                       key="_top_folders")],
-        [sg.Multiline("Top 10 Exclusions Hit\n" + data.get_top_exclusions(10), size=(100, 12), \
+        [sg.Multiline("Top 10 Exclusions Hit\n" + data.get_top_exclusions(10), size=(100, 12),
                       key="_top_exclusions")],
         [
-            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'), \
+            sg.FileSaveAs("Save As", button_color=('black', '#F0F0F0'),
                           file_types=(("Log File", "*.log"),)),
             sg.Button("Cancel", button_color=('black', '#F0F0F0')),
         ]
@@ -752,7 +809,7 @@ def manual_sfc(data):
         elif event == "Analyze":
             with open(data.sfc_path) as file:
                 data.last_log_line = file.readlines()[0]
-            data.update()
+            data.update(settings_manager)
             window.FindElement('_quarantine_count').Update(data.quarantine_count)
             window.FindElement('_spero_count').Update(data.spero_count)
             window.FindElement('_ethos_count').Update(data.ethos_count)
@@ -762,10 +819,10 @@ def manual_sfc(data):
             window.FindElement('_cache_hit_count').Update(data.cache_hit_count)
             window.FindElement('_malicious_hit_count').Update(data.malicious_hit_count)
             window.FindElement('_inner_file_scan').Update(data.inner_file_count)
-            window.FindElement('_top_processes').Update("Top 10 Processes\n" + \
+            window.FindElement('_top_processes').Update("Top 10 Processes\n" +
                                                         data.get_top_processes(10))
             window.FindElement('_top_paths').Update("Top 10 Paths\n" + data.get_top_paths(10))
-            window.FindElement('_top_extensions').Update("Top 10 Extensions\n" + \
+            window.FindElement('_top_extensions').Update("Top 10 Extensions\n" +
                                                          data.get_top_extensions(10))
             window.FindElement('_top_folders').Update("Top 10 Folders\n" + data.get_top_folders(10))
             window.FindElement('_top_exclusions').Update("Top 10 Exclusions Hit\n" + data.get_top_exclusions(10))
@@ -776,16 +833,19 @@ def manual_sfc(data):
     window.close()
 
 
-def diag_failed_popup():
-    '''
+def diag_failed_popup(failures):
+    """
     Provide feedback for unsuccessful diagnostic gathering.
-    '''
+    """
+    copy_fail = [sg.Text("From the directory from where this Health Check tool is executed, gather "
+                         "the amp_health_checker_log.log file.")] if failures[0] else []
+    support_tool_fail = [sg.Text("From the Start Menu, Run 'Support Diagnostic Tool'.This will drop a .7z file "
+                                 "on the Desktop after a few seconds.")] if failures[1] else []
+
     layout = [
         [sg.Text("The diagnostic gathering failed.  Please do the following:")],
-        [sg.Text("From the Start Menu, Run 'Support Diagnostic Tool'.  This will drop a .7z file \
-            on the Desktop after a few seconds.")],
-        [sg.Text("Also, from the directory from where this Health Check tool is executed, gather \
-            the amp_health_checker_log.log file.")],
+        support_tool_fail,
+        copy_fail,
         [sg.Text("The .7z and .log file are the two needed Diagnostic Files.")],
         [sg.OK()],
     ]
@@ -799,8 +859,3 @@ def diag_failed_popup():
             break
     window.close()
     return
-
-
-if __name__ == "__main__":
-    d = Data()
-    diag_failed_popup()
